@@ -1,0 +1,47 @@
+#!/bin/bash
+cd /tmp
+
+function process {
+    uk=$1
+    unpaper --post-zoom 1.5 scan-$uk-%d.pnm unpaper-$uk-%d.pnm
+    rm -f scan-$uk-*
+    for i in $(ls unpaper-$uk-*); do
+        convert $i $i.tif
+        # rm -f $i
+        histogram=`convert "${i}.tif" -threshold 50% -format %c histogram:info:-`
+        white=`echo "${histogram}" | grep "white" | sed -n 's/^ *\(.*\):.*$/\1/p'`
+        black=`echo "${histogram}" | grep "black" | sed -n 's/^ *\(.*\):.*$/\1/p'`
+        blank=`echo "scale=4; ${black}/${white} < 0.005" | bc`
+        if [ ${blank} -eq "1" ]; then
+            echo "${i}.tif seems to be blank - removing it..."
+            rm "${i}.tif"
+        fi
+    done
+    tiffcp unpaper-$uk-*.tif unpaper-$uk.tif
+    rm -f unpaper-$uk-*.tif
+    tesseract -l deu "unpaper-$uk.tif" "tesseract-$uk" pdf
+    rm -f unpaper-$uk.tif
+    chown 1000:1000 tesseract-$uk.pdf 
+    gs -o /documents/$(date +"%Y-%m-%d-%H:%M:%S.pdf") -sDEVICE=pdfwrite -dDownsampleColorImages=true -dDownsampleGrayImages=true -dDownsampleMonoImages=true -dColorImageResolution=36 -dGrayImageResolution=36 -dMonoImageResolution=36 -dColorImageDownsampleThreshold=1.0 -dGrayImageDownsampleThreshold=1.0 -dMonoImageDownsampleThreshold=1.0 "tesseract-$uk.pdf" && rm "tesseract-$uk.pdf"
+}
+
+
+while true; do
+    device=$(scanimage -L | grep scanner | sed "s/.*\`\(.*\)'.*/\1/g")
+    if [[ $device != fujitsu* ]]; then
+        sleep 2
+        continue
+    fi
+    echo "using device: $device"
+    break
+done
+while true; do
+    uk=$(dd if=/dev/urandom bs=2 count=2048 2>/dev/null| openssl sha1 | cut -c 21-26)
+    scanimage --dev "$device" --batch=scan-$uk-%d.pnm --source "ADF DUPLEX" --mode Color --resolution 300 --page-width 210 --page-height 297 -t 0 -l 0 -x 210 -y 297 --format=pnm --contrast 50 >/dev/null 2>&1
+    if [[ $? != 0 ]]; then
+        sleep 2
+        continue
+    fi
+    date +"%Y-%m-%d NEW JOB $uk"
+    process $uk &
+done
