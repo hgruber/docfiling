@@ -1,30 +1,21 @@
 #!/bin/bash
-cd /tmp
+cd tmp
 
 function process {
     uk=$1
-    unpaper --post-zoom 1.5 scan-$uk-%d.pnm unpaper-$uk-%d.pnm
-    rm -f scan-$uk-*
-    for i in $(ls unpaper-$uk-*); do
-        convert $i $i.tif
-        # rm -f $i
-        histogram=`convert "${i}.tif" -threshold 50% -format %c histogram:info:-`
-        white=`echo "${histogram}" | grep "white" | sed -n 's/^ *\(.*\):.*$/\1/p'`
-        black=`echo "${histogram}" | grep "black" | sed -n 's/^ *\(.*\):.*$/\1/p'`
-        blank=`echo "scale=4; ${black}/${white} < 0.005" | bc`
-        if [ ${blank} -eq "1" ]; then
-            echo "${i}.tif seems to be blank - removing it..."
-            rm "${i}.tif"
+    for i in $(ls scan-$uk-*.pnm | sort -V); do
+        if convert $i -format "%[fx:mean>0.9999?1:0]" info: | grep -q 0; then
+            convert $i $i.tif && rm -f $i
+        else
+            echo "$i is blank, skipping it."
+            rm -f $i
         fi
     done
-    tiffcp unpaper-$uk-*.tif unpaper-$uk.tif
-    rm -f unpaper-$uk-*.tif
-    tesseract -l deu "unpaper-$uk.tif" "tesseract-$uk" pdf
-    rm -f unpaper-$uk.tif
-    chown 1000:1000 tesseract-$uk.pdf 
-    gs -o /documents/$(date +"%Y-%m-%d-%H:%M:%S.pdf") -sDEVICE=pdfwrite -dDownsampleColorImages=true -dDownsampleGrayImages=true -dDownsampleMonoImages=true -dColorImageResolution=36 -dGrayImageResolution=36 -dMonoImageResolution=36 -dColorImageDownsampleThreshold=1.0 -dGrayImageDownsampleThreshold=1.0 -dMonoImageDownsampleThreshold=1.0 "tesseract-$uk.pdf" && rm "tesseract-$uk.pdf"
+    tiffcp $(ls -1 -h scan-$uk-*.tif| sort -V | xargs echo) all-$uk.tif && rm -f scan-$uk-*.tif
+    tesseract -l deu all-$uk.tif - pdf \
+    | gs -o /documents/$(date +"%Y-%m-%d-%H%M%S.pdf") -sDEVICE=pdfwrite -dDownsampleColorImages=true -dDownsampleGrayImages=true -dDownsampleMonoImages=true -dColorImageResolution=36 -dGrayImageResolution=36 -dMonoImageResolution=36 -dColorImageDownsampleThreshold=1.0 -dGrayImageDownsampleThreshold=1.0 -dMonoImageDownsampleThreshold=1.0 - \
+    && rm all-$uk.tif
 }
-
 
 while true; do
     device=$(scanimage -L | grep scanner | sed "s/.*\`\(.*\)'.*/\1/g")
